@@ -1,3 +1,7 @@
+{-# LANGUAGE
+   BangPatterns
+   #-}
+
 module Numeric.Unum where
 
 import Data.Bits ((.|.),
@@ -16,12 +20,13 @@ fsizesize = 2
 --
 --  This is a helper data structure that stores various
 --  low-level bits of information about unums
-data Gbound = Gbound {-# UNPACK #-} !Bool
-                     {-# UNPACK #-} !BV.BitVector
-                     {-# UNPACK #-} !Bool
-                     {-# UNPACK #-} !BV.BitVector
-                     {-# UNPACK #-} !Bool
-                     {-# UNPACK #-} !Bool
+data GBound = GBound {-# UNPACK #-} !Bool -- ^Is the number a NaN?
+                     {-# UNPACK #-} !BV.BitVector -- ^Bits of the fraction.
+                     {-# UNPACK #-} !Bool -- ^Is the fraction negative?
+                     {-# UNPACK #-} !BV.BitVector -- ^Bits of the exponent.
+                     {-# UNPACK #-} !Bool -- ^Is the exponent negative?
+                     {-# UNPACK #-} !Bool -- ^Is the interval endpoint open?
+                     {-# UNPACK #-} !Bool -- ^Is the number infinite?
 
 -- |A Unum, stored as a variable-size bit array.
 --
@@ -99,89 +104,115 @@ efsizemask = fsizemask .|. esizemask
 utagmask :: Bitmask
 utagmask = ubitmask .|. efsizemask
 
+-- |A bitmask for the sign of a unum, provided the unum has 'maxubits' bits.
+signmask :: Bitmask
+signmask = shiftL (BV.bitVec maxubits 1) (maxubits - 1)
+
 -- |The least significant bit of a unum's fraction.
-ulpu :: Bitmask
-ulpu = shiftL (BV.bitVec (utagsize + 1) 1) utagsize
+ulpmask :: Bitmask
+ulpmask = shiftL (BV.bitVec (utagsize + 1) 1) utagsize
+
+
+-- Constants
+--------------------------------------------------------------------------------
 
 -- |The smallest positive number that can be represented.
-smallnormalu :: Unum
-smallnormalu =
+smallSubnormal :: Unum
+smallSubnormal =
    Unum $! BV.bitVec maxubits 0
            .|. efsizemask
            .|. shiftL ubitmask 1
 
--- |A bitmask for the sign of a unum, provided the unum has 'maxubits' bits.
-signbigu :: Bitmask
-signbigu = shiftL (BV.bitVec maxubits 1) (maxubits - 1)
-
 -- |Positive infinity.
-posinfu :: Unum
-posinfu = Unum $! BV.ones maxubits `BV.nand` (signbigu .|. ubitmask)
+posInf :: Unum
+posInf = Unum $! BV.ones maxubits `BV.nand` (signmask .|. ubitmask)
 
 -- |Negative infinity.
-neginfu :: Unum
-neginfu = Unum $! BV.ones maxubits `BV.nand` ubitmask
+negInf :: Unum
+negInf = Unum $! BV.ones maxubits `BV.nand` ubitmask
 
 -- |The largest positive real number that can be represented.
-maxrealu :: Unum
-maxrealu = Unum $! BV.ones maxubits `BV.nand` (signbigu .|. ulpu .|. ubitmask)
+maxReal :: Unum
+maxReal = Unum $! BV.ones maxubits `BV.nand` (signmask .|. ulpmask .|. ubitmask)
 
 -- |The largest negative real number that can be represented.
-minrealu :: Unum
-minrealu = Unum $! BV.ones maxubits `BV.nand` (ulpu .|. ubitmask)
+minReal :: Unum
+minReal = Unum $! BV.ones maxubits `BV.nand` (ulpmask .|. ubitmask)
 
--- |Alias for 'minrealu'. This was included because it appeared in the prototype.
-negbigu :: Unum
-negbigu = minrealu
+-- |Alias for 'minreal'. This was included because it appeared in the prototype.
+negBig :: Unum
+negBig = minReal
 
 -- |Quiet NaN.
-qNaNu :: Unum
-qNaNu = Unum $! BV.ones maxubits `BV.nand` signbigu
+qNaN :: Unum
+qNaN = Unum $! BV.ones maxubits `BV.nand` signmask
 
 -- |Signalling NaN.
-sNaNu :: Unum
-sNaNu = Unum $! BV.ones maxubits
+sNaN :: Unum
+sNaN = Unum $! BV.ones maxubits
 
 -- |The open, @negative infinity@ lower bound for an interval.
-negopeninfu :: Unum
-negopeninfu = if utagsize == 1 then Unum $! BV.bitVec 4 13
+negOpenInf :: Unum
+negOpenInf = if utagsize == 1 then Unum $! BV.bitVec 4 13
               else Unum $! shiftL (BV.bitVec 4 15) (utagsize - 1)
 
 -- |The open, @positive infinity@ upper bound of an interval.
-posopeninfu :: Unum
-posopeninfu = if utagsize == 1 then Unum $! BV.bitVec 4 5
+posOpenInf :: Unum
+posOpenInf = if utagsize == 1 then Unum $! BV.bitVec 4 5
               else Unum $! shiftL (BV.bitVec 4 7) (utagsize - 1)
 
 -- |The open, @0@ upper bound of an interval.
-negopenzerou :: Unum
-negopenzerou = Unum $! shiftL (BV.bitVec 4 9) (utagsize - 1)
-
---------------------------------------------------------------------------------
-
--- |Prints the bits of a 'BV.BitVector', starting with the MSB.
-showBV :: BV.BitVector -> String
-showBV = map to10 . BV.toBits
-   where
-      to10 True = '1'
-      to10 False = '0'
-
+negOpenZero :: Unum
+negOpenZero = Unum $! shiftL (BV.bitVec 4 9) (utagsize - 1)
 
 -- |The open, @0@ lower bound of an interval.
 -- 
 -- @
--- bits posopenzerou = ubitmask
+-- bits posOpenZero = ubitmask
 -- @
-posopenzerou :: Unum
-posopenzerou = Unum $! ubitmask
+posOpenZero :: Unum
+posOpenZero = Unum $! ubitmask
 
+--------------------------------------------------------------------------------
 
+-- |Prints the bits of a 'BV.BitVector' as a sequence of 1s and 0s,
+--  starting with the MSB.
+showBits :: BV.BitVector -> String
+showBits = map to10 . BV.toBits
+   where
+      to10 True = '1'
+      to10 False = '0'
 
-u2g :: Unum -> Gbound
-u2g (Unum x) = undefined
+-- |Extracts various pieces of information from a unum.
+--  These low-level data are then used for calculations.
+u2g :: Unum -> GBound
+u2g !(Unum !x) = 
+   if fromUnum sNaN == (signmask .|. x)
+   then GBound True
+               BV.nil
+               False
+               BV.nil
+               False
+               True
+               False
+
+   else undefined
+               
 
 
 instance Eq Unum where
    (==) x y = undefined
+      where
+         gx = u2g x
+         gy = u2g y
+
+{- data Gbound = Gbound {-# UNPACK #-} !Bool -- ^Is the number a NaN?
+                     {-# UNPACK #-} !BV.BitVector -- ^Bits of the fraction.
+                     {-# UNPACK #-} !Bool -- ^Is the fraction negative?
+                     {-# UNPACK #-} !BV.BitVector -- ^Bits of the exponent.
+                     {-# UNPACK #-} !Bool -- ^Is the exponent negative?
+                     {-# UNPACK #-} !Bool -- ^Is the interval endpoint open?
+                     {-# UNPACK #-} !Bool -- ^Is the number infinite? -}
 
 
 --instance Ord Unum
