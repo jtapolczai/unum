@@ -3,15 +3,14 @@ module Numeric.Unum where
 import Data.Bits ((.|.),
                   shiftL)
 import qualified Data.BitVector as BV
-import Data.Int
 
 data BitArray = BitArray
 
 esizesize :: Int
-esizesize = 4
+esizesize = 3
 
 fsizesize :: Int
-fsizesize = 5
+fsizesize = 2
 
 -- |A general bound.
 --
@@ -24,28 +23,36 @@ data Gbound = Gbound {-# UNPACK #-} !Bool
                      {-# UNPACK #-} !Bool
                      {-# UNPACK #-} !Bool
 
--- |A Unum, stored as a bit array.
+-- |A Unum, stored as a variable-size bit array.
+--
 --  A Unum is very much like an IEEE float, with the difference that
---  it stores the sizes of its exponent and fraction in additional metadata
---  at the right end.
+--  iit stores three pieces of metadata after the LSB:
 --
---  Going from left to right, the format is as follows:
+--  * A __ubit__ that's 0 iff the unum is exact;
+--  * the exponent size hat stores how many bits the exponent has;
+--  * the fraction size that stores how many bits the fraction has.
 --
--- * The first bit is the sign.
--- * @esize@ bits are the exponent.
--- * @fsize@ bits are the fraction.
--- * 1 bit is the ubit that is 1 iff the number is exact.
--- * @esizesize@ bits are the exponent size @esize@.
--- * @fsizesize@ bits are the fraction size @fsize@.
-newtype Unum = Unum BV.BitVector
+--  Thus, going from left to right, the format is as follows:
+--
+-- * __1 bit__: the sign.
+-- * __esize bits__: the exponent.
+-- * __fsize bits__: the fraction.
+-- * __1 bit__: the ubit.
+-- * __esizesize bits__: the exponent size @esize@.
+-- * __fsizesize bits__: the fraction size @fsize@.
+--
+-- esizesize and fsizesize are not stored in the unum and depend
+-- on the environment.
+newtype Unum = Unum{fromUnum :: BV.BitVector}
 
--- |A bitmask.
+-- |A bitmask over a unum.
 type Bitmask = BV.BitVector
 
 -- |A UBound.
 --  TODO
 data Ubound = Ubound
 
+-- Basic machinery of unums; bit-fiddling.
 --------------------------------------------------------------------------------
 
 -- |The maximum exponent size.
@@ -66,7 +73,7 @@ maxubits = 1 + esizemax + fsizemax + utagsize
 
 -- |A bitmask to get only the ubit out of a unum.
 ubitmask :: Bitmask
-ubitmask = shiftL (BV.bitVec (utagsize - 1) 1) (utagsize - 1)
+ubitmask = shiftL (BV.bitVec utagsize 1) (utagsize - 1)
 
 -- |A bitmask to only get the fsize-part from a unum.
 fsizemask :: Bitmask
@@ -94,7 +101,7 @@ utagmask = ubitmask .|. efsizemask
 
 -- |The least significant bit of a unum's fraction.
 ulpu :: Bitmask
-ulpu = shiftL (BV.bitVec 1 1) utagsize
+ulpu = shiftL (BV.bitVec (utagsize + 1) 1) utagsize
 
 -- |The smallest positive number that can be represented.
 smallnormalu :: Unum
@@ -105,7 +112,7 @@ smallnormalu =
 
 -- |A bitmask for the sign of a unum, provided the unum has 'maxubits' bits.
 signbigu :: Bitmask
-signbigu = shiftL (BV.bitVec 1 1) (maxubits - 1)
+signbigu = shiftL (BV.bitVec maxubits 1) (maxubits - 1)
 
 -- |Positive infinity.
 posinfu :: Unum
@@ -117,15 +124,11 @@ neginfu = Unum $! BV.ones maxubits `BV.nand` ubitmask
 
 -- |The largest positive real number that can be represented.
 maxrealu :: Unum
-maxrealu = Unum $! inf `BV.nand` ulpu
-   where
-      (Unum inf) = posinfu
+maxrealu = Unum $! BV.ones maxubits `BV.nand` (signbigu .|. ulpu .|. ubitmask)
 
 -- |The largest negative real number that can be represented.
 minrealu :: Unum
-minrealu = Unum $! (inf `BV.nand` ulpu) .|. signbigu
-   where
-      (Unum inf) = posinfu
+minrealu = Unum $! BV.ones maxubits `BV.nand` (ulpu .|. ubitmask)
 
 -- |Alias for 'minrealu'. This was included because it appeared in the prototype.
 negbigu :: Unum
@@ -154,6 +157,13 @@ negopenzerou :: Unum
 negopenzerou = Unum $! shiftL (BV.bitVec 4 9) (utagsize - 1)
 
 --------------------------------------------------------------------------------
+
+-- |Prints the bits of a 'BV.BitVector', starting with the MSB.
+showBV :: BV.BitVector -> String
+showBV = map to10 . BV.toBits
+   where
+      to10 True = '1'
+      to10 False = '0'
 
 
 -- |The open, @0@ lower bound of an interval.
