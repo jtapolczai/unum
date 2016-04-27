@@ -2,13 +2,40 @@
    BangPatterns
    #-}
 
-module Numeric.Unum where
+module Numeric.Unum (
+   -- *Types
+   GBound(..),
+   Unum(..),
+   UBound(..),
+   Bitmask(..),
+   -- *Bitmasks
+   -- |Bitmasks for low-level bit-fiddling around Unums.
+   ubitmask,
+   esizemask,
+   fsizemask,
+   efsizemask,
+   utagmask,
+   signmask,
+   ulpmask,
+   -- *Constants
+   -- |Various constants. These are dependent on the environment.
+   smallSubnormal,
+   posInf,
+   negInf,
+   posOpenInf,
+   negOpenInf,
+   maxReal,
+   minReal,
+   negBig,
+   qNaN,
+   sNaN,
+   posOpenZero,
+   negOpenZero,
+   ) where
 
 import Data.Bits ((.|.),
                   shiftL)
 import qualified Data.BitVector as BV
-
-data BitArray = BitArray
 
 esizesize :: Int
 esizesize = 3
@@ -19,14 +46,24 @@ fsizesize = 2
 -- |A general bound.
 --
 --  This is a helper data structure that stores various
---  low-level bits of information about unums
-data GBound = GBound {-# UNPACK #-} !Bool -- ^Is the number a NaN?
-                     {-# UNPACK #-} !BV.BitVector -- ^Bits of the fraction.
-                     {-# UNPACK #-} !Bool -- ^Is the fraction negative?
-                     {-# UNPACK #-} !BV.BitVector -- ^Bits of the exponent.
-                     {-# UNPACK #-} !Bool -- ^Is the exponent negative?
-                     {-# UNPACK #-} !Bool -- ^Is the interval endpoint open?
-                     {-# UNPACK #-} !Bool -- ^Is the number infinite?
+--  low-level bits of information about unums.
+--
+--  The fields are:
+--
+-- * Is the number a NaN?
+-- * Bits of the fraction.
+-- * Is the fraction negative?
+-- * Bits of the exponent.
+-- * Is the exponent negative?
+-- * Is the interval endpoint open?
+-- * Is the number infinite?
+data GBound = GBound {-# UNPACK #-} !Bool
+                     {-# UNPACK #-} !BV.BitVector
+                     {-# UNPACK #-} !Bool
+                     {-# UNPACK #-} !BV.BitVector
+                     {-# UNPACK #-} !Bool
+                     {-# UNPACK #-} !Bool
+                     {-# UNPACK #-} !Bool
 
 -- |A Unum, stored as a variable-size bit array.
 --
@@ -55,7 +92,7 @@ type Bitmask = BV.BitVector
 
 -- |A UBound.
 --  TODO
-data Ubound = Ubound
+data UBound = UBound
 
 -- Basic machinery of unums; bit-fiddling.
 --------------------------------------------------------------------------------
@@ -80,13 +117,13 @@ maxubits = 1 + esizemax + fsizemax + utagsize
 ubitmask :: Bitmask
 ubitmask = shiftL (BV.bitVec utagsize 1) (utagsize - 1)
 
--- |A bitmask to only get the fsize-part from a unum.
-fsizemask :: Bitmask
-fsizemask = BV.bitVec fsizesize (fsizemax - 1)
-
 -- |A bitmask to only get the esize-part of a unum
 esizemask :: Bitmask
 esizemask = shiftL (BV.bitVec (fsizesize + esizesize) (esizemax - 1)) fsizesize
+
+-- |A bitmask to only get the fsize-part from a unum.
+fsizemask :: Bitmask
+fsizemask = BV.bitVec fsizesize (fsizemax - 1)
 
 -- |A bitmask to get the fsize-part and the esize-part from a enum.
 --
@@ -131,6 +168,16 @@ posInf = Unum $! BV.ones maxubits `BV.nand` (signmask .|. ubitmask)
 negInf :: Unum
 negInf = Unum $! BV.ones maxubits `BV.nand` ubitmask
 
+-- |The open, @positive infinity@ upper bound of an interval.
+posOpenInf :: Unum
+posOpenInf = if utagsize == 1 then Unum $! BV.bitVec 4 5
+              else Unum $! shiftL (BV.bitVec 4 7) (utagsize - 1)
+              
+-- |The open, @negative infinity@ lower bound for an interval.
+negOpenInf :: Unum
+negOpenInf = if utagsize == 1 then Unum $! BV.bitVec 4 13
+              else Unum $! shiftL (BV.bitVec 4 15) (utagsize - 1)
+
 -- |The largest positive real number that can be represented.
 maxReal :: Unum
 maxReal = Unum $! BV.ones maxubits `BV.nand` (signmask .|. ulpmask .|. ubitmask)
@@ -151,20 +198,6 @@ qNaN = Unum $! BV.ones maxubits `BV.nand` signmask
 sNaN :: Unum
 sNaN = Unum $! BV.ones maxubits
 
--- |The open, @negative infinity@ lower bound for an interval.
-negOpenInf :: Unum
-negOpenInf = if utagsize == 1 then Unum $! BV.bitVec 4 13
-              else Unum $! shiftL (BV.bitVec 4 15) (utagsize - 1)
-
--- |The open, @positive infinity@ upper bound of an interval.
-posOpenInf :: Unum
-posOpenInf = if utagsize == 1 then Unum $! BV.bitVec 4 5
-              else Unum $! shiftL (BV.bitVec 4 7) (utagsize - 1)
-
--- |The open, @0@ upper bound of an interval.
-negOpenZero :: Unum
-negOpenZero = Unum $! shiftL (BV.bitVec 4 9) (utagsize - 1)
-
 -- |The open, @0@ lower bound of an interval.
 -- 
 -- @
@@ -172,6 +205,10 @@ negOpenZero = Unum $! shiftL (BV.bitVec 4 9) (utagsize - 1)
 -- @
 posOpenZero :: Unum
 posOpenZero = Unum $! ubitmask
+
+-- |The open, @0@ upper bound of an interval.
+negOpenZero :: Unum
+negOpenZero = Unum $! shiftL (BV.bitVec 4 9) (utagsize - 1)
 
 --------------------------------------------------------------------------------
 
